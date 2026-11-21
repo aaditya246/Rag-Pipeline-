@@ -1,82 +1,162 @@
+
 import os
 import pickle
 import pandas as pd
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import (
+    ChatGoogleGenerativeAI,
+    GoogleGenerativeAIEmbeddings,
+)
 from langchain_core.documents import Document
 
-# Cố gắng import RAGAS, tương thích với RAGAS v0.2.x
 try:
     from ragas.testset import TestsetGenerator
 except ImportError as e:
-    print(f"Lỗi Import RAGAS: {e}. Vui lòng đảm bảo bạn đã cài đặt các thư viện trong yêu cầu mới.")
+    print(
+        f"RAGAS Import Error: {e}. "
+        "Please make sure you have installed all "
+        "the required libraries."
+    )
     exit(1)
+
 
 def main():
     load_dotenv()
+
     api_key = os.getenv("GEMINI_API_KEY")
+
     if not api_key:
-        print("Lỗi: Vui lòng thêm GEMINI_API_KEY vào file .env")
+        print(
+            "Error: Please add GEMINI_API_KEY "
+            "to your .env file."
+        )
         return
-    
-    # Bổ sung dòng này để LangChain nhận diện được API key của bạn
+
     os.environ["GOOGLE_API_KEY"] = api_key
 
-    print("1. Đang nạp dữ liệu sản phẩm từ data/rag_dataset.csv...")
+    # ==========================================================
+    # Step 1: Load Product Dataset
+    # ==========================================================
+
+    print("1. Loading product data from data/rag_dataset.csv...")
+
     try:
-        from build_index import load_dataset, create_langchain_documents
+        from build_index import (
+            load_dataset,
+            create_langchain_documents,
+        )
+
         df = load_dataset("data/rag_dataset.csv")
         raw_documents = create_langchain_documents(df)
+
     except Exception as e:
-        print(f"Lỗi khi đọc dữ liệu: {e}")
+        print(f"Error loading product dataset: {e}")
         return
 
-    # Gộp tất cả sản phẩm thành một chuỗi lớn để RAGAS xử lý (Tránh lỗi tài liệu quá ngắn)
-    # RAGAS 0.2.x yêu cầu document phải dài hơn 100 token để có thể phân tích Knowledge Graph
-    combined_text = "\n\n---\n\n".join([doc.page_content for doc in raw_documents])
-    documents = [Document(page_content=combined_text)]
+    # Combine all products into one large text document
+    # to prevent errors caused by documents being too short.
+    #
+    # RAGAS 0.2.x requires documents longer than 100 tokens
+    # for knowledge graph analysis.
 
-    print("2. Đang khởi tạo Giám khảo sinh đề (Gemini)...")
-    
-    # Khởi tạo mô hình ngôn ngữ và mô hình nhúng của Google
-    # Dùng gemini-2.5-flash vì Google cho phép tới 1,000,000 Token/phút
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
-    
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
-    # Khởi tạo TestsetGenerator (RAGAS v0.2.x)
-    generator = TestsetGenerator.from_langchain(
-        llm=llm,
-        embedding_model=embeddings
+    combined_text = "\n\n---\n\n".join(
+        [doc.page_content for doc in raw_documents]
     )
 
-    print("3. Bắt đầu sinh 15 câu hỏi tự động bằng RAGAS (quá trình này có thể mất vài phút)...")
+    documents = [
+        Document(page_content=combined_text)
+    ]
+
+    # ==========================================================
+    # Step 2: Initialize Testset Generator
+    # ==========================================================
+
+    print("2. Initializing AI testset generator (Gemini)...")
+
+    # Initialize Google language and embedding models.
+    # Gemini 2.5 Flash is used for generating test questions.
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0.7,
+    )
+
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001"
+    )
+
+    # Initialize TestsetGenerator (RAGAS 0.2.x)
+
+    generator = TestsetGenerator.from_langchain(
+        llm=llm,
+        embedding_model=embeddings,
+    )
+
+    # ==========================================================
+    # Step 3: Generate Evaluation Questions
+    # ==========================================================
+
+    print(
+        "3. Generating 15 evaluation questions "
+        "automatically using RAGAS..."
+    )
+
     try:
         from ragas.run_config import RunConfig
-        # Giới hạn 1 luồng duy nhất và cấu hình retry tối đa 100 lần
-        # để tránh lỗi Rate Limit khi dùng Free Tier của Google API
-        run_config = RunConfig(max_workers=1, max_retries=100)
 
-        # Tương thích RAGAS 0.2.x, sinh tự động dựa trên knowledge graph ngẫu nhiên
+        # Limit execution to one worker.
+        # Configure retries to handle temporary API errors
+        # and rate limits.
+
+        run_config = RunConfig(
+            max_workers=1,
+            max_retries=100,
+        )
+
+        # Generate test questions from the knowledge graph.
+        # Compatible with the original RAGAS 0.2.x workflow.
+
         testset = generator.generate_with_langchain_docs(
             documents,
             testset_size=15,
-            run_config=run_config
+            run_config=run_config,
         )
+
     except Exception as e:
-        print(f"\n[!] Lỗi khi sinh dữ liệu: {e}")
-        print("Gợi ý: Thường là do API Rate Limit của Gemini. Bạn có thể giảm testset_size xuống 5 để thử lại.")
+        print(f"\n[!] Error generating testset: {e}")
+
+        print(
+            "Suggestion: This may be caused by Gemini API "
+            "rate limits. Try reducing testset_size to 5."
+        )
         return
 
-    print("4. Chuyển đổi và lưu kết quả...")
-    # Lưu kết quả thành Pandas DataFrame rồi xuất ra CSV
+    # ==========================================================
+    # Step 4: Convert and Save Generated Testset
+    # ==========================================================
+
+    print("4. Converting and saving generated results...")
+
+    # Convert generated testset into a Pandas DataFrame.
+    # Save the DataFrame as a CSV file.
+
     df = testset.to_pandas()
+
     output_path = "data/ragas_testset.csv"
+
     df.to_csv(output_path, index=False)
-    
-    print(f"\n✅ Hoàn tất! Đã lưu testset thành công tại: {output_path}")
-    print("Bạn có thể mở file CSV này lên để xem thử các câu hỏi do AI đẻ ra.")
+
+    print("\nTestset generation completed successfully!")
+
+    print(
+        f"Generated testset saved to: {output_path}"
+    )
+
+    print(
+        "You can open the CSV file to view "
+        "the AI-generated evaluation questions."
+    )
+
 
 if __name__ == "__main__":
     main()

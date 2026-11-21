@@ -1,9 +1,9 @@
+
 import pandas as pd
 from datasets import Dataset
 import os
 from dotenv import load_dotenv
 
-# Cố gắng import RAGAS
 try:
     from ragas import evaluate
     from ragas.metrics import (
@@ -12,109 +12,154 @@ try:
         context_precision,
         context_recall,
     )
-    from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+    from langchain_google_genai import (
+        ChatGoogleGenerativeAI,
+        GoogleGenerativeAIEmbeddings,
+    )
 except ImportError as e:
-    print(f"Lỗi Import RAGAS/LangChain: {e}. Vui lòng cài đặt đầy đủ theo requirements.txt")
+    print(f"Import error: {e}")
+    print("Please install all dependencies from requirements.txt")
     exit(1)
 
-# Import hệ thống RAG (LangChain version)
-# Trước đây: Import 12 hàm riêng lẻ
-# Bây giờ: Chỉ cần 2 hàm chính
+
 from rag_pipeline import load_rag_chain, ask
+
 
 def main():
     load_dotenv()
+
     api_key = os.getenv("GEMINI_API_KEY")
+
     if not api_key:
-        print("Lỗi: Vui lòng thêm GEMINI_API_KEY vào file .env")
+        print("Error: Please add GEMINI_API_KEY to your .env file.")
         return
-    # Bổ sung dòng này để LangChain nhận diện được API key
+
+    # Set the Google API key for LangChain
     os.environ["GOOGLE_API_KEY"] = api_key
 
     # ==========================================================
-    # Bước 1: Nạp hệ thống RAG
+    # Step 1: Load the RAG System
     # ==========================================================
-    # Trước đây: Load 5 thành phần riêng lẻ (embedding_model, faiss_index, docs, bm25, reranker)
-    # Bây giờ: 1 dòng duy nhất — load_rag_chain() trả về chain hoàn chỉnh
-    print("1. Đang nạp hệ thống RAG (LangChain Chain)...")
+    # Previously: Loaded 5 components separately:
+    # embedding_model, faiss_index, docs, bm25, reranker
+    #
+    # Now: load_rag_chain() loads the complete RAG pipeline.
+
+    print("1. Loading the RAG system (LangChain Chain)...")
+
     try:
         chain = load_rag_chain()
     except Exception as e:
-        print(f"Lỗi nạp hệ thống: {e}")
+        print(f"Error loading RAG system: {e}")
         return
 
     # ==========================================================
-    # Bước 2: Đọc tập dữ liệu kiểm thử
+    # Step 2: Load the Evaluation Test Dataset
     # ==========================================================
-    print("2. Đang đọc tập dữ liệu kiểm thử (Testset)...")
+
+    print("2. Loading evaluation test dataset...")
+
     try:
         testset_df = pd.read_csv("data/ragas_testset.csv")
     except FileNotFoundError:
-        print("Lỗi: Không tìm thấy data/ragas_testset.csv. Vui lòng chạy generate_testset.py trước.")
+        print(
+            "Error: data/ragas_testset.csv was not found. "
+            "Please run generate_testset.py first."
+        )
         return
 
     questions = testset_df["question"].tolist()
-    # Kiểm tra xem bộ test có cột ground_truth không
+
+    # Check whether the dataset contains ground truth answers
     if "ground_truth" in testset_df.columns:
         ground_truths = testset_df["ground_truth"].tolist()
     else:
-        print("Cảnh báo: Không tìm thấy cột ground_truth, RAGAS sẽ không thể chấm context_recall.")
+        print(
+            "Warning: The ground_truth column was not found. "
+            "RAGAS may not be able to calculate context recall."
+        )
         ground_truths = [""] * len(questions)
-    
+
     answers = []
     contexts_list = []
 
     # ==========================================================
-    # Bước 3: Thu thập câu trả lời từ RAG
+    # Step 3: Collect Answers from the RAG System
     # ==========================================================
-    # Trước đây: 4 bước thủ công cho mỗi câu hỏi
-    #   query_emb = encode_query(embedding_model, question)
-    #   contexts = retrieve_context(index, docs, query_emb, question, bm25, reranker, k=3)
-    #   prompt = build_prompt(question, contexts)
-    #   answer = generate_answer(prompt)
+    # Previously: Performed multiple manual operations:
+    # 1. Encode the user query
+    # 2. Retrieve relevant documents
+    # 3. Build the prompt
+    # 4. Generate the answer
     #
-    # Bây giờ: 1 lệnh duy nhất — ask(chain, question)
-    print("3. Đang thu thập câu trả lời từ RAG cho từng câu hỏi (Data Collection)...")
+    # Now: ask(chain, question) handles the complete process.
+
+    print("3. Collecting RAG answers for evaluation...")
+
     for idx, question in enumerate(questions):
-        print(f"  Đang xử lý câu {idx+1}/{len(questions)}...")
-        
+
+        print(
+            f"   Processing question {idx + 1}/{len(questions)}..."
+        )
+
         result = ask(chain, question)
-        
-        # Lấy answer
+
+        # Extract the generated answer
         answer = result["answer"]
-        
-        # Lấy contexts (LangChain trả về list of Document objects)
-        # RAGAS cần list of strings, nên phải convert
-        contexts = [doc.page_content for doc in result["context"]]
-        
+
+        # Extract retrieved contexts
+        # LangChain returns Document objects.
+        # RAGAS requires a list of strings.
+
+        contexts = [
+            doc.page_content for doc in result["context"]
+        ]
+
         answers.append(answer)
         contexts_list.append(contexts)
 
     # ==========================================================
-    # Bước 4: Chuẩn bị dữ liệu cho RAGAS
+    # Step 4: Prepare the RAGAS Evaluation Dataset
     # ==========================================================
-    print("4. Chuẩn bị định dạng dữ liệu cho RAGAS...")
+
+    print("4. Preparing the dataset for RAGAS evaluation...")
+
     data = {
         "question": questions,
         "answer": answers,
         "contexts": contexts_list,
-        "ground_truth": ground_truths
+        "ground_truth": ground_truths,
     }
+
     dataset = Dataset.from_dict(data)
 
     # ==========================================================
-    # Bước 5: Chấm điểm bằng RAGAS
+    # Step 5: Evaluate the RAG System Using RAGAS
     # ==========================================================
-    print("5. Bắt đầu chấm điểm (Evaluation) bằng Giám khảo Gemini...")
-    # Cấu hình Giám khảo
-    evaluator_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.0)
-    evaluator_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
-    # Gọi RAGAS evaluate
+    print("5. Starting RAGAS evaluation using Gemini...")
+
+    # Configure the evaluation LLM
+    evaluator_llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0.0,
+    )
+
+    evaluator_embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/embedding-001"
+    )
+
+    # Run RAGAS evaluation
     try:
         from ragas.run_config import RunConfig
-        # Buộc RAGAS chấm điểm từng câu một và tự động đợi nếu bị Google chặn
-        run_config = RunConfig(max_workers=1, max_retries=100)
+
+        # Evaluate questions with a single worker
+        # and retry if temporary API errors occur.
+
+        run_config = RunConfig(
+            max_workers=1,
+            max_retries=100,
+        )
 
         result = evaluate(
             dataset=dataset,
@@ -126,21 +171,35 @@ def main():
             ],
             llm=evaluator_llm,
             embeddings=evaluator_embeddings,
-            run_config=run_config
+            run_config=run_config,
         )
+
     except Exception as e:
-        print(f"\n[!] Lỗi khi đánh giá: {e}")
+        print(f"\nEvaluation error: {e}")
         return
 
-    print("\n================== BẢNG ĐIỂM TỔNG KẾT ==================")
-    print(result)
-    print("========================================================")
+    # ==========================================================
+    # Step 6: Display Evaluation Results
+    # ==========================================================
 
-    # Lưu chi tiết điểm của từng câu hỏi để phân tích sau
+    print("\n================ RAGAS EVALUATION RESULTS ================")
+    print(result)
+    print("==========================================================")
+
+    # ==========================================================
+    # Step 7: Save Evaluation Results to CSV
+    # ==========================================================
+
     result_df = result.to_pandas()
+
     output_path = "data/evaluation_results.csv"
+
     result_df.to_csv(output_path, index=False)
-    print(f"\n✅ Đã lưu bảng điểm chi tiết của từng câu hỏi tại: {output_path}")
+
+    print(
+        f"\nEvaluation results successfully saved to: {output_path}"
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -11,8 +11,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # Load RAG Chain (Cached so it only runs once)
-# Trước đây: Phải load 5 thành phần riêng lẻ (embedding, reranker, faiss, docs, bm25)
-# Bây giờ: 1 hàm duy nhất load_rag_chain() trả về chain hoàn chỉnh
+
 @st.cache_resource(show_spinner=False)
 def load_resources():
     with st.spinner("Đang tải dữ liệu cửa hàng và AI... Vui lòng đợi nhé."):
@@ -38,8 +37,7 @@ if prompt := st.chat_input("VD: Recommend a blue cotton shirt for summer"):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # Retrieve and Generate
-    # Trước đây: 4 bước thủ công (encode_query → retrieve_context → build_prompt → generate_answer)
-    # Bây giờ: 1 lệnh duy nhất ask(chain, prompt) — LangChain chain tự chạy cả 4 bước
+
     with st.spinner("Searching for products and generating a response..."):
         try:
             result = ask(rag_chain, prompt)
