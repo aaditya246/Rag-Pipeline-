@@ -57,31 +57,53 @@ def main():
     # Step 2: Load the Evaluation Test Dataset
     # ==========================================================
 
+    # ==========================================================
+# Step 2: Load the Evaluation Test Dataset
+# ==========================================================
+
     print("2. Loading evaluation test dataset...")
 
     try:
-        testset_df = pd.read_csv("data/ragas_testset.csv")
+        testset_df = pd.read_csv("data/ragas_testset_english.csv")
     except FileNotFoundError:
-        print(
-            "Error: data/ragas_testset.csv was not found. "
-            "Please run generate_testset.py first."
-        )
+        print("Error: data/ragas_testset_english.csv not found.")
         return
 
     questions = testset_df["question"].tolist()
 
-    # Check whether the dataset contains ground truth answers
     if "ground_truth" in testset_df.columns:
         ground_truths = testset_df["ground_truth"].tolist()
     else:
-        print(
-            "Warning: The ground_truth column was not found. "
-            "RAGAS may not be able to calculate context recall."
-        )
+        print("Warning: ground_truth column not found.")
         ground_truths = [""] * len(questions)
 
-    answers = []
-    contexts_list = []
+    print(f"Total test cases: {len(questions)}")
+
+    # print("2. Loading evaluation test dataset...")
+
+    # try:
+    #     testset_df = pd.read_csv("data/ragas_testset.csv")
+    # except FileNotFoundError:
+    #     print(
+    #         "Error: data/ragas_testset.csv was not found. "
+    #         "Please run generate_testset.py first."
+    #     )
+    #     return
+
+    # questions = testset_df["question"].tolist()
+
+    # # Check whether the dataset contains ground truth answers
+    # if "ground_truth" in testset_df.columns:
+    #     ground_truths = testset_df["ground_truth"].tolist()
+    # else:
+    #     print(
+    #         "Warning: The ground_truth column was not found. "
+    #         "RAGAS may not be able to calculate context recall."
+    #     )
+    #     ground_truths = [""] * len(questions)
+
+    # answers = []
+    # contexts_list = []
 
     # ==========================================================
     # Step 3: Collect Answers from the RAG System
